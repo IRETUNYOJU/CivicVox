@@ -101,6 +101,10 @@
   )
 )
 
+(define-private (validate-principal (user principal))
+  (is-some (map-get? user-identities user))
+)
+
 (define-private (validate-proposal-input 
   (title (string-utf8 100)) 
   (description (string-utf8 500))
@@ -152,6 +156,10 @@
     )
     (try! (check-owner))
     (asserts! (validate-proposal-input title description duration) err-invalid-input)
+    
+    ;; Update the current proposal ID
+    (var-set current-proposal-id proposal-id)
+    
     (ok (map-set proposals
       proposal-id
       {
@@ -241,29 +249,18 @@
   )
 )
 
-(define-public (dispute-certification 
-  (authority principal) 
-  (certified-user principal)
-)
+(define-public (dispute-certification (authority principal) (certified-user principal))
   (let
     (
-      (certification (unwrap! 
-        (map-get? certifications 
-          {
-            authority: authority,
-            certified-user: certified-user
-          }
-        ) 
-        err-invalid-certification
-      ))
+      (cert-key {authority: authority, certified-user: certified-user})
+      (certification (unwrap! (map-get? certifications cert-key) err-invalid-certification))
     )
+    (asserts! (is-registered tx-sender) err-not-registered)
+    (asserts! (validate-principal authority) err-invalid-input)
+    (asserts! (validate-principal certified-user) err-invalid-input)
     (asserts! (not (get is-disputed certification)) err-certification-dispute)
     
-    (map-set certification-disputes
-      {
-        authority: authority,
-        certified-user: certified-user
-      }
+    (map-set certification-disputes cert-key
       {
         dispute-start-block: stacks-block-height,
         total-dispute-votes: u0,
@@ -273,11 +270,7 @@
       }
     )
     
-    (ok (map-set certifications
-      {
-        authority: authority,
-        certified-user: certified-user
-      }
+    (ok (map-set certifications cert-key
       (merge certification { is-disputed: true })
     ))
   )
@@ -290,29 +283,13 @@
 )
   (let
     (
-      (dispute (unwrap! 
-        (map-get? certification-disputes 
-          {
-            authority: authority,
-            certified-user: certified-user
-          }
-        ) 
-        err-invalid-certification
-      ))
-      (certification (unwrap! 
-        (map-get? certifications 
-          {
-            authority: authority,
-            certified-user: certified-user
-          }
-        ) 
-        err-invalid-certification
-      ))
-      (authority-info (unwrap! 
-        (map-get? user-identities authority) 
-        err-invalid-input
-      ))
+      (cert-key {authority: authority, certified-user: certified-user})
+      (authority-info (unwrap! (map-get? user-identities authority) err-not-registered))
+      (dispute (unwrap! (map-get? certification-disputes cert-key) err-invalid-certification))
     )
+    (asserts! (is-registered tx-sender) err-not-registered)
+    (asserts! (validate-principal authority) err-invalid-input)
+    (asserts! (validate-principal certified-user) err-invalid-input)
     (asserts! (not (get is-resolved dispute)) err-certification-dispute)
     
     (let
@@ -325,13 +302,7 @@
           }
         ))
       )
-      (map-set certification-disputes
-        {
-          authority: authority,
-          certified-user: certified-user
-        }
-        updated-dispute
-      )
+      (map-set certification-disputes cert-key updated-dispute)
       
       (if (>= (get total-dispute-votes updated-dispute) u10)
         (begin
@@ -356,11 +327,7 @@
             true
           )
           
-          (map-set certification-disputes
-            {
-              authority: authority,
-              certified-user: certified-user
-            }
+          (map-set certification-disputes cert-key
             (merge updated-dispute { is-resolved: true })
           )
         )
